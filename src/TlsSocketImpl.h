@@ -5,6 +5,7 @@
 #include <future>
 
 #include "restc-cpp/restc-cpp.h"
+#include "restc-cpp/logging.h"
 
 #include <boost/asio/ssl.hpp>
 #include <boost/version.hpp>
@@ -66,15 +67,31 @@ public:
 
     void AsyncConnect(const boost::asio::ip::tcp::endpoint& ep,
                     const string &host,
+                    bool tcpNodelay,
                     boost::asio::yield_context& yield) override {
         return WrapException<void>([&] {
             //TLS-SNI (without this option, handshakes attempts with hosts behind CDNs will fail,
             //due to the fact that the CDN does not have enough information at the TLS layer
             //to decide where to forward the handshake attempt).
+
+            RESTC_CPP_LOG_TRACE_("AsyncConnect - Calling SSL_set_tlsext_host_name --> " << host);
             SSL_set_tlsext_host_name(ssl_socket_->native_handle(), host.c_str());
+
+            RESTC_CPP_LOG_TRACE_("AsyncConnect - Calling async_connect");
             GetSocket().async_connect(ep, yield);
+
+            RESTC_CPP_LOG_TRACE_("AsyncConnect - Calling lowest_layer().set_option");
+            ssl_socket_->lowest_layer().set_option(
+                        boost::asio::ip::tcp::no_delay(tcpNodelay));
+
+            RESTC_CPP_LOG_TRACE_("AsyncConnect - Calling OnAfterConnect()");
+            OnAfterConnect();
+
+            RESTC_CPP_LOG_TRACE_("AsyncConnect - Calling async_handshake");
             ssl_socket_->async_handshake(boost::asio::ssl::stream_base::client,
                                          yield);
+
+            RESTC_CPP_LOG_TRACE_("AsyncConnect - Done");
         });
     }
 
@@ -86,7 +103,7 @@ public:
 
     void Close(Reason reason) override {
         if (ssl_socket_->lowest_layer().is_open()) {
-            RESTC_CPP_LOG_TRACE << "Closing " << *this;
+            RESTC_CPP_LOG_TRACE_("Closing " << *this);
             ssl_socket_->lowest_layer().close();
         }
         reason_ = reason;

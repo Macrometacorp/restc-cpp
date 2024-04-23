@@ -8,10 +8,7 @@
 #include "restc-cpp/restc-cpp.h"
 #include "restc-cpp/IteratorFromJsonSerializer.h"
 
-#include <boost/log/core.hpp>
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
-
+#include "gtest/gtest.h"
 #include "restc-cpp/test_helper.h"
 #include "restc-cpp/RequestBuilder.h"
 
@@ -99,6 +96,8 @@ void second() {
 
     // Call DoSomethingInteresting as a co-routine in a worker-thread.
     rest_client->Process(DoSomethingInteresting);
+
+    rest_client->CloseWhenReady();
 }
 
 void third() {
@@ -551,56 +550,64 @@ void thirtheenth() {
     });
 }
 
-int main() {
+void fourteenth() {
+    Request::Properties properties;
+    //properties.bindToLocalAddress = "127.0.0.1:";
+    properties.bindToLocalAddress = ":12345";
+    //properties.bindToLocalAddress = "[::1]:12345";
+    //properties.bindToLocalAddress = "localhost:12345";
+    auto rest_client = RestClient::Create(properties);
 
-    namespace logging = boost::log;
-    logging::core::get()->set_filter
-    (
-        logging::trivial::severity >= logging::trivial::debug
-    );
+    // Call DoSomethingInteresting as a co-routine in a worker-thread.
+    rest_client->Process(DoSomethingInteresting);
+}
 
-    try {
-        cout << "First: " << endl;
-        first();
+TEST(ReadmeTests, All) {
+    cout << "First: " << endl;
+    EXPECT_NO_THROW(first());
 
-        cout << "Second: " << endl;
-        second();
+    cout << "Second: " << endl;
+    EXPECT_NO_THROW(second());
 
-        cout << "Third: " << endl;
-        third();
+    cout << "Third: " << endl;
+    EXPECT_NO_THROW(third());
 
-        cout << "Forth: " << endl;
-        forth();
+    cout << "Forth: " << endl;
+    EXPECT_NO_THROW(forth());
 
-        cout << "Fifth: " << endl;
-        fifth();
+    cout << "Fifth: " << endl;
+    EXPECT_NO_THROW(fifth());
 
-        cout << "Sixth: " << endl;
-        sixth();
+    cout << "Sixth: " << endl;
+    EXPECT_NO_THROW(sixth());
 
-        cout << "Seventh: " << endl;
-        seventh();
+    cout << "Seventh: " << endl;
+    EXPECT_NO_THROW(seventh());
 
-        cout << "Eight: " << endl;
-        eight();
+    cout << "Eight: " << endl;
+    EXPECT_NO_THROW(eight());
 
-        cout << "Ninth: " << endl;
-        ninth();
+    cout << "Ninth: " << endl;
+    EXPECT_NO_THROW(ninth());
 
-        cout << "Tenth: " << endl;
-        tenth();
+    cout << "Tenth: " << endl;
+    EXPECT_NO_THROW(tenth());
 
-        cout << "Eleventh: " << endl;
-        eleventh();
+    cout << "Eleventh: " << endl;
+    EXPECT_NO_THROW(eleventh());
 
-        cout << "Twelfth: " << endl;
-        twelfth();
+    cout << "Twelfth: " << endl;
+    EXPECT_NO_THROW(twelfth());
 
-        cout << "Thirtheenth: " << endl;
-        thirtheenth();
+    cout << "Thirtheenth: " << endl;
+    EXPECT_NO_THROW(thirtheenth());
 
-    } catch(const exception& ex) {
-        cerr << "Something threw up: " << ex.what() << endl;
-        return 1;
-    }
+    cout << "Fourteenth: " << endl;
+    EXPECT_NO_THROW(fourteenth());
+}
+
+int main(int argc, char * argv[]) {
+    RESTC_CPP_TEST_LOGGING_SETUP("debug");
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();;
 }

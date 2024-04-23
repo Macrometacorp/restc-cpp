@@ -20,7 +20,270 @@
 using namespace std;
 using namespace std::string_literals;
 
+namespace {
+
+// We support versions of boost prior to the introduction of this convenience function
+
+boost::asio::ip::address_v6 make_address_v6(const char* str,
+    boost::system::error_code& ec)
+{
+  boost::asio::ip::address_v6::bytes_type bytes;
+  unsigned long scope_id = 0;
+  if (boost::asio::detail::socket_ops::inet_pton(
+        BOOST_ASIO_OS_DEF(AF_INET6), str, &bytes[0], &scope_id, ec) <= 0)
+    return boost::asio::ip::address_v6();
+  return boost::asio::ip::address_v6(bytes, scope_id);
+}
+
+boost::asio::ip::address_v4 make_address_v4(const char* str,
+    boost::system::error_code& ec)
+{
+  boost::asio::ip::address_v4::bytes_type bytes;
+  if (boost::asio::detail::socket_ops::inet_pton(
+        BOOST_ASIO_OS_DEF(AF_INET), str, &bytes, 0, ec) <= 0)
+    return boost::asio::ip::address_v4();
+  return boost::asio::ip::address_v4(bytes);
+}
+
+boost::asio::ip::address make_address(const char* str,
+    boost::system::error_code& ec)
+{
+  boost::asio::ip::address_v6 ipv6_address =
+    make_address_v6(str, ec);
+  if (!ec)
+    return boost::asio::ip::address{ipv6_address};
+
+  boost::asio::ip::address_v4 ipv4_address =
+    make_address_v4(str, ec);
+  if (!ec)
+    return boost::asio::ip::address{ipv4_address};
+
+  return boost::asio::ip::address{};
+}
+
+} // anon ns
+
 namespace restc_cpp {
+
+const std::string& Request::Proxy::GetName() {
+    static const array<string, 3> names = {
+      "NONE", "HTTP", "SOCKS5"
+    };
+
+    return names.at(static_cast<size_t>(type));
+}
+
+namespace {
+
+constexpr char SOCKS5_VERSION = 0x05;
+constexpr char SOCKS5_TCP_STREAM = 0x01;
+constexpr size_t SOCKS5_MAX_HOSTNAME_LEN = 255;
+constexpr char SOCKS5_IPV4_ADDR = 0x01;
+constexpr char SOCKS5_IPV6_ADDR = 0x04;
+constexpr char SOCKS5_HOSTNAME_ADDR = 0x03;
+
+/* hostname: example.com:123                 -> "example.com", 123
+ * ipv4:     1.2.3.4:123                     -> "1.2.3.4", 123
+ * ipv6:     [fe80::4479:f6ff:fea3:aa23]:123 -> "fe80::4479:f6ff:fea3:aa23", 123
+ */
+pair<string, uint16_t> ParseAddress(const std::string addr) {
+    auto pos = addr.find('['); // IPV6
+    string host;
+    string port;
+    if (pos != string::npos) {
+        auto host = addr.substr(1); // strip '['
+        pos = host.find(']');
+        if (pos == string::npos) {
+            throw ParseException{"IPv6 address must have a ']'"};
+        }
+        port = host.substr(pos);
+        host = host.substr(0, pos);
+
+        if (port.size() < 3 || (host.at(1) != ':')) {
+            throw ParseException{"Need `]:<port>` in "s + addr};
+        }
+        port = port.substr(2);
+    } else {
+        // IPv4 or address
+        pos = addr.find(':');
+        if (pos == string::npos || (addr.size() - pos) < 2) {
+            throw ParseException{"Need `:<port>` in "s + addr};
+        }
+        port = addr.substr(pos +1);
+        host = addr.substr(0, pos);
+    }
+
+    const uint16_t port_num = stoul(port);
+    if (port_num == 0 || port_num > numeric_limits<uint16_t>::max()) {
+        throw ParseException{"Port `:<port>` must be a valid IP port number in "s + addr};
+    }
+
+    return {host, port_num};
+}
+
+/*! Parse the address and write the socks5 connect request */
+void ParseAddressIntoSocke5ConnectRequest(const std::string& addr,
+                                          vector<uint8_t>& out) {
+
+    out.push_back(SOCKS5_VERSION);
+    out.push_back(SOCKS5_TCP_STREAM);
+    out.push_back(0);
+
+    string host;
+    uint16_t port = 0;
+
+    tie(host, port) = ParseAddress(addr);
+
+    const auto final_port = htons(port);
+
+    boost::system::error_code ec;
+    const auto a = make_address(host.c_str(), ec);
+    if (ec) {
+        // Assume that it's a hostname.
+        // TODO: Validate with a regex
+        if (host.size() > SOCKS5_MAX_HOSTNAME_LEN) {
+            throw ParseException{"SOCKS5 address must be <= 255 bytes"};
+        }
+        if (host.size() < 1) {
+            throw ParseException{"SOCKS5 address must be > 1 byte"};
+        }
+
+        out.push_back(SOCKS5_HOSTNAME_ADDR);
+
+        // Add string lenght (single byte)
+        out.push_back(static_cast<uint8_t>(host.size()));
+
+        // Copy the address, without trailing zero
+        copy(host.begin(), host.end(), back_insert_iterator<vector<uint8_t>>(out));
+    } else if (a.is_v4()) {
+        const auto v4 = a.to_v4();
+        const auto b = v4.to_bytes();
+        assert(b.size() == 4);
+        out.push_back(SOCKS5_IPV4_ADDR);
+        copy(b.begin(), b.end(), back_insert_iterator<vector<uint8_t>>(out));
+    } else if (a.is_v6()) {
+        const auto v6 = a.to_v6();
+        const auto b = v6.to_bytes();
+        assert(b.size() == 16);
+        out.push_back(SOCKS5_IPV6_ADDR);
+        copy(b.begin(), b.end(), back_insert_iterator<vector<uint8_t>>(out));
+    } else {
+        throw ParseException{"Internal error. Failed to parse: "s + addr};
+    }
+
+    // Add 2 byte port number in network byte order
+    assert(sizeof(final_port) >= 2);
+    const unsigned char *p = reinterpret_cast<const unsigned char *>(&final_port);
+    out.push_back(*p);
+    out.push_back(*(p +1));
+}
+
+// Return 0 whene there is no more bytes to read
+size_t ValidateCompleteSocks5ConnectReply(uint8_t *buf, size_t len) {
+    if (len < 5) {
+        throw RestcCppException{"SOCKS5 server connect reply must start at minimum 5 bytes"s};
+    }
+
+    if (buf[0] != SOCKS5_VERSION) {
+        throw ProtocolException{"Wrong/unsupported SOCKS5 version in connect reply: "s
+                                + to_string(buf[0])};
+    }
+
+    if (buf[1] != 0) { // Request failed
+        throw ProtocolException{"Unexpected value in SOCKS5 header[1] "s
+                                + to_string(buf[1])};
+    }
+
+    size_t hdr_len = 5; // Mandatory bytes
+
+    switch(buf[3]) {
+    case SOCKS5_IPV4_ADDR:
+        hdr_len += 4 + 1;
+        break;
+    case SOCKS5_IPV6_ADDR:
+        hdr_len += 16 + 1;
+        break;
+    case SOCKS5_HOSTNAME_ADDR:
+        if (len < 4) {
+            return false; // We need the length field...
+        }
+        hdr_len += buf[3] + 1 + 1;
+    break;
+    default:
+        throw ProtocolException{"Wrong/unsupported SOCKS5 BINDADDR type: "s
+                                + to_string(buf[3])};
+    }
+
+    if (len > hdr_len) {
+        throw NotSupportedException{"SOCKS5: Received more data then the connect response."};
+    }
+
+    return hdr_len;
+}
+
+void DoSocks5Handshake(Connection& connection,
+                       const Url& url,
+                       const Request::Properties properties,
+                       Context& ctx) {
+
+    assert(properties.proxy.type == Request::Proxy::Type::SOCKS5);
+    auto& sck = connection.GetSocket();
+
+    // Send no-auth handshake
+    {
+        array<uint8_t, 3> hello = {SOCKS5_VERSION, 1, 0};
+        RESTC_CPP_LOG_TRACE_("DoSocks5Handshake - saying hello");
+        sck.AsyncWriteT(hello, ctx.GetYield());
+    }
+    {
+        array<uint8_t, 2> reply = {};
+        RESTC_CPP_LOG_TRACE_("DoSocks5Handshake - waiting for greeting");
+        sck.AsyncRead({reply.data(), 2}, ctx.GetYield());
+
+        if (reply[0] != SOCKS5_VERSION) {
+            throw ProtocolException{"Wrong/unsupported SOCKS5 version: "s + to_string(reply[0])};
+        }
+
+        if (reply[1] != 0) {
+            throw AccessDeniedException{"SOCKS5 Access denied: "s + to_string(reply[1])};
+        }
+    }
+
+    // Send connect parameters
+    {
+        vector<uint8_t> params;
+
+        auto addr = url.GetHost().to_string() + ":" + to_string(url.GetPort());
+
+        ParseAddressIntoSocke5ConnectRequest(addr, params);
+        RESTC_CPP_LOG_TRACE_("DoSocks5Handshake - saying connect to " <<  url.GetHost().to_string() << ":" << url.GetPort());
+        sck.AsyncWriteT(params, ctx.GetYield());
+    }
+
+    {
+        array<uint8_t, 255 + 6> reply;
+        size_t remaining = 5; // Minimum length
+        uint8_t *next = reply.data();
+
+        RESTC_CPP_LOG_TRACE_("DoSocks5Handshake - waiting for connect confirmation - first segment");
+        auto read = sck.AsyncRead({next, remaining}, ctx.GetYield());
+        const auto hdr_len = ValidateCompleteSocks5ConnectReply(reply.data(), read);
+        if (hdr_len > read) {
+            remaining = hdr_len - read;
+            next += read;
+            if (hdr_len > reply.size()) {
+                throw ProtocolException{"SOCKS5 Connect header from the server is too large"};
+            }
+            RESTC_CPP_LOG_TRACE_("DoSocks5Handshake - waiting for connect confirmation - second segment");
+            read += sck.AsyncRead({next, remaining}, ctx.GetYield());
+            ValidateCompleteSocks5ConnectReply(reply.data(), read);
+        }
+
+        assert(read == hdr_len);
+    }
+    RESTC_CPP_LOG_TRACE_("DoSocks5Handshake - done");
+}
+} // anonumous ns
 
 class RequestImpl : public Request {
 public:
@@ -138,7 +401,6 @@ public:
         return bytes_sent_ - header_size_;
     }
 
-
     unique_ptr<Reply> Execute(Context& ctx) override {
         int redirects = 0;
         while(true) {
@@ -157,12 +419,12 @@ public:
                     throw ConstraintException("Too many redirects.");
                 }
 
-                RESTC_CPP_LOG_DEBUG << "Redirecting ("
+                RESTC_CPP_LOG_DEBUG_("Redirecting ("
                     << ex.GetCode()
                     << ") '" << url_
                     << "' --> '"
                     << url
-                    << "') ";
+                    << "') ");
                 url_ = move(url);
                 parsed_url_ = url_.c_str();
                 add_url_args_ = false; // Use whatever arguments we got in the redirect
@@ -216,7 +478,7 @@ private:
         request_buffer << Verb(request_type_) << ' ';
 
         if (properties_->proxy.type == Request::Proxy::Type::HTTP) {
-            request_buffer << parsed_url_.GetProtocolName() << parsed_url_.GetHost();
+            request_buffer << parsed_url_.GetProtocolName() << parsed_url_.GetHost() << ":" << parsed_url_.GetPort();
         }
 
         // Add arguments to the path as ?name=value&name=value...
@@ -266,11 +528,26 @@ private:
     }
 
     boost::asio::ip::tcp::resolver::query GetRequestEndpoint() {
-        if (properties_->proxy.type == Request::Proxy::Type::HTTP) {
+        const auto proxy_type = properties_->proxy.type;
+
+        if (proxy_type == Request::Proxy::Type::SOCKS5) {
+            string host;
+            uint16_t port = 0;
+            tie(host, port) = ParseAddress(properties_->proxy.address);
+
+            RESTC_CPP_LOG_TRACE_("Using " << properties_->proxy.GetName()
+                                 << " Proxy at: "
+                                 << host << ':' << port);
+
+            return {host, to_string(port)};
+        }
+
+        if (proxy_type == Request::Proxy::Type::HTTP) {
             Url proxy {properties_->proxy.address.c_str()};
 
-            RESTC_CPP_LOG_TRACE << "Using HTTP Proxy at: "
-                << proxy.GetHost() << ':' << proxy.GetPort();
+            RESTC_CPP_LOG_TRACE_("Using " << properties_->proxy.GetName()
+                                 << " Proxy at: "
+                                 << proxy.GetHost() << ':' << proxy.GetPort());
 
             return { proxy.GetHost().to_string(),
                 proxy.GetPort().to_string()};
@@ -292,9 +569,91 @@ private:
         dirty_ = true;
     }
 
+    template <typename protocolT>
+    boost::asio::ip::tcp::endpoint ToEp(const std::string& endp,
+                                        const protocolT& protocol,
+                                        Context& ctx) const {
+        string host, port;
+
+        auto endipv6 = endp.find(']');
+        if (endipv6 == string::npos) {
+            endipv6 = 0;
+        }
+        const auto pos = endp.find(':', endipv6);
+        if (pos == string::npos) {
+            host = endp;
+        } else {
+            host = endp.substr(0, pos);
+            if (endp.size() > pos) {
+                port = endp.substr(pos + 1);
+            }
+        }
+
+        // Strip IPv6 brackets, asio can't resolve it
+        if (endipv6 && !host.empty() && host.front() == '[') {
+            host = host.substr(1, endipv6 -1);
+        }
+
+        RESTC_CPP_LOG_TRACE_("host=" << host << ", port=" << port);
+
+        if (host.empty()) {
+            const auto port_num = stoi(port);
+            if (port_num < 1 || port_num > std::numeric_limits<uint16_t>::max()) {
+                throw RestcCppException{"Port number out of range: "s + port};
+            }
+            return {protocol, static_cast<uint16_t>(port_num)};
+        }
+
+        boost::asio::ip::tcp::resolver::query q{host, port};
+        boost::asio::ip::tcp::resolver resolver(owner_.GetIoService());
+
+        auto ep = resolver.async_resolve(q, ctx.GetYield());
+        const decltype(ep) addr_end;
+        for(; ep != addr_end; ++ep)
+        if (ep != addr_end) {
+
+            RESTC_CPP_LOG_TRACE_("ep=" << ep->endpoint() << ", protocol=" << ep->endpoint().protocol().protocol());
+
+            if (protocol == ep->endpoint().protocol()) {
+                return ep->endpoint();
+            }
+
+            RESTC_CPP_LOG_TRACE_("Incorrect protocol, looping for next alternative");
+        }
+
+        RESTC_CPP_LOG_ERROR_("Failed to resolve endpoint " << endp
+                             << " with protocol " << protocol.protocol());
+        throw FailedToResolveEndpointException{"Failed to resolve endpoint: "s + endp};
+    }
+
+
+    auto GetBindProtocols(const std::string& endp, Context& ctx) {
+        std::vector<decltype(boost::asio::ip::tcp::v4())> p;
+
+        if (!endp.empty()) {
+            try {
+                ToEp(endp, boost::asio::ip::tcp::v4(), ctx);
+                p.push_back(boost::asio::ip::tcp::v4());
+            } catch (const FailedToResolveEndpointException&) {
+                ;
+            }
+
+            try {
+                ToEp(endp, boost::asio::ip::tcp::v6(), ctx);
+                p.push_back(boost::asio::ip::tcp::v6());
+            } catch (const FailedToResolveEndpointException&) {
+                ;
+            }
+        }
+
+        return p;
+    }
+
     Connection::ptr_t Connect(Context& ctx) {
 
         static const auto timer_name = "Connect"s;
+
+        auto prot_filter = GetBindProtocols(properties_->bindToLocalAddress, ctx);
 
         const Connection::Type protocol_type =
             (parsed_url_.GetProtocol() == Url::Protocol::HTTPS)
@@ -305,49 +664,134 @@ private:
         // Resolve the hostname
         const auto query = GetRequestEndpoint();
 
-        RESTC_CPP_LOG_TRACE << "Resolving " << query.host_name() << ":"
-            << query.service_name();
+        RESTC_CPP_LOG_TRACE_("Resolving " << query.host_name() << ":"
+            << query.service_name());
 
         auto address_it = resolver.async_resolve(query,
                                                  ctx.GetYield());
         const decltype(address_it) addr_end;
 
         for(; address_it != addr_end; ++address_it) {
+//            if (owner_.IsClosing()) {
+//                RESTC_CPP_LOG_DEBUG_("RequestImpl::Connect: The rest client is closed (at first loop). Aborting.");
+//                throw FailedToConnectException("Failed to connect (closed)");
+//            }
+
             const auto endpoint = address_it->endpoint();
 
-            RESTC_CPP_LOG_TRACE << "Trying endpoint " << endpoint;
+            RESTC_CPP_LOG_TRACE_("Trying endpoint " << endpoint);
 
-            // Get a connection from the pool
-            auto connection = owner_.GetConnectionPool()->GetConnection(
-                endpoint, protocol_type);
+            for(size_t retries = 0; retries < 8; ++retries) {
+                // Get a connection from the pool
+                auto connection = owner_.GetConnectionPool()->GetConnection(
+                    endpoint, protocol_type);
 
-            // Connect if the connection is new.
-            if (!connection->GetSocket().IsOpen()) {
+                // Connect if the connection is new.
+                if (connection->GetSocket().IsOpen()) {
+                    return connection;
+                }
 
-                RESTC_CPP_LOG_DEBUG << "Connecting to " << endpoint;
+                RESTC_CPP_LOG_DEBUG_("Connecting to " << endpoint);
+
+                if (!properties_->bindToLocalAddress.empty()) {
+
+                    // Only connect outwards to protocols we can bind to
+                    if (!prot_filter.empty()) {
+                        if (std::find(prot_filter.begin(), prot_filter.end(), endpoint.protocol())
+                                == prot_filter.end()) {
+                            RESTC_CPP_LOG_TRACE_("Filtered out (protocol mismatch) local address: "
+                                << properties_->bindToLocalAddress);
+                            break; // Break out of retry loop, re-enter endpoint loop
+                        }
+                    }
+
+                    RESTC_CPP_LOG_TRACE_("Binding to local address: "
+                        << properties_->bindToLocalAddress);
+
+                    boost::system::error_code ec;
+                    auto local_ep = ToEp(properties_->bindToLocalAddress, endpoint.protocol(), ctx);
+                    auto& sck = connection->GetSocket().GetSocket();
+                    sck.open(local_ep.protocol());
+                    sck.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+                    sck.bind(local_ep, ec);
+
+                    if (ec) {
+                        RESTC_CPP_LOG_ERROR_("Failed to bind to local address '"
+                            << local_ep
+                            << "': " << ec.message());
+
+                        sck.close();
+                        throw RestcCppException{"Failed to bind to local address: "s
+                                                + properties_->bindToLocalAddress};
+                    }
+                }
+
+
+//                if (owner_.IsClosed()) {
+//                    RESTC_CPP_LOG_DEBUG_("RequestImpl::Connect: The rest client is closed. Aborting.");
+//                    throw FailedToConnectException("Failed to connect (closed)");
+//                }
 
                 auto timer = IoTimer::Create(timer_name,
                     properties_->connectTimeoutMs, connection);
 
                 try {
+                    if (retries) {
+                        RESTC_CPP_LOG_DEBUG_("RequestImpl::Connect: taking a nap");
+                        ctx.Sleep(retries * 20ms);
+                        RESTC_CPP_LOG_DEBUG_("RequestImpl::Connect: Waking up. Will try to read from the socket now.");
+                    }
+
+                    if (properties_->proxy.type == Proxy::Type::SOCKS5) {
+                        connection->GetSocket().SetAfterConnectCallback([&]() {
+                            RESTC_CPP_LOG_TRACE_("RequestImpl::Connect: In Socks5 callback");
+
+                            DoSocks5Handshake(*connection, parsed_url_, *properties_, ctx);
+
+                            RESTC_CPP_LOG_TRACE_("RequestImpl::Connect: Leaving Socks5 callback");
+                        });
+                    }
+
+                    RESTC_CPP_LOG_TRACE_("RequestImpl::Connect: calling AsyncConnect --> " << endpoint);
                     connection->GetSocket().AsyncConnect(
-                        endpoint, address_it->host_name(), ctx.GetYield());
+                        endpoint, address_it->host_name(),
+                        properties_->tcpNodelay, ctx.GetYield());
+                    RESTC_CPP_LOG_TRACE_("RequestImpl::Connect: OK AsyncConnect --> " << endpoint);
+                    return connection;
+                } catch (const boost::system::system_error& ex) {
+                    RESTC_CPP_LOG_TRACE_("RequestImpl::Connect:: Caught boost::system::system_error exception: \"" << ex.what()
+                                         << "\". Will close connection " << *connection);
+                    connection->GetSocket().GetSocket().close();
+
+                    if (ex.code() == boost::system::errc::resource_unavailable_try_again) {
+                        if ( retries < 8) {
+                            RESTC_CPP_LOG_DEBUG_(
+                                "RequestImpl::Connect:: Caught boost::system::system_error exception: \""
+                                    << ex.what()
+                                    << "\" while connecting to " << endpoint
+                                    << ". I will continue the retry loop.");
+                            continue;
+                        }
+                    }
+                    RESTC_CPP_LOG_DEBUG_(
+                        "RequestImpl::Connect:: Caught boost::system::system_error exception: \""
+                            << ex.what()
+                            << "\" while connecting to " << endpoint);
+                    break; // Go to the next endpoint
                 } catch(const exception& ex) {
-                    RESTC_CPP_LOG_WARN << "Connect to "
+                    RESTC_CPP_LOG_WARN_("Connect to "
                         << endpoint
                         << " failed with exception type: "
                         << typeid(ex).name()
-                        << ", message: " << ex.what();
+                        << ", message: " << ex.what());
 
                     connection->GetSocket().GetSocket().close();
-                    continue;
                 }
-            }
 
-            return connection;
-        }
+            } // retries
+        } // endpoints
 
-        throw FailedToConnectException("Failed to connect");
+        throw FailedToConnectException("Failed to connect (exhausted all options)");
     }
 
     void SendRequestPayload(Context& /*ctx*/,
@@ -355,6 +799,10 @@ private:
 
         static const auto timer_name = "SendRequestPayload"s;
         bool have_sent_headers = false;
+
+        if (properties_->beforeWriteFn) {
+            properties_->beforeWriteFn();
+        }
 
         while(boost::asio::buffer_size(write_buffer))
         {
@@ -385,9 +833,9 @@ private:
                 bytes_sent_ += boost::asio::buffer_size(write_buffer);
 
             } catch(const exception& ex) {
-                RESTC_CPP_LOG_WARN << "Write failed with exception type: "
+                RESTC_CPP_LOG_WARN_("Write failed with exception type: "
                     << typeid(ex).name()
-                    << ", message: " << ex.what();
+                    << ", message: " << ex.what());
                 throw;
             }
 
@@ -443,14 +891,17 @@ private:
         write_buffer.push_back(headers);
         header_size_ = boost::asio::buffer_size(write_buffer);
 
-        RESTC_CPP_LOG_TRACE << "Request: " << (const boost::string_ref)headers
-            << ' ' << *connection_;
+        RESTC_CPP_LOG_TRACE_("Request: " << (const boost::string_ref)headers
+            << ' ' << *connection_);
 
         PrepareBody();
         SendRequestPayload(ctx, write_buffer);
+        if (properties_->afterWriteFn) {
+            properties_->afterWriteFn();
+        }
 
-        RESTC_CPP_LOG_DEBUG << "Sent " << Verb(request_type_) << " request to '" << url_ << "' "
-            << *connection_;
+        RESTC_CPP_LOG_DEBUG_("Sent " << Verb(request_type_) << " request to '" << url_ << "' "
+            << *connection_);
 
         assert(writer_);
         return *writer_;
@@ -464,12 +915,23 @@ private:
         writer_->Finish();
         writer_.reset();
 
+        RESTC_CPP_LOG_TRACE_("GetReply: writer is reset.");
+
         DataReader::ReadConfig cfg;
         cfg.msReadTimeout = properties_->recvTimeout;
         auto reply = ReplyImpl::Create(connection_, ctx, owner_, properties_,
                                        request_type_);
-        reply->StartReceiveFromServer(
-            DataReader::CreateIoReader(connection_, ctx, cfg));
+
+        RESTC_CPP_LOG_TRACE_("GetReply: Calling StartReceiveFromServer");
+        try {
+            reply->StartReceiveFromServer(
+                DataReader::CreateIoReader(connection_, ctx, cfg));
+        } catch (const exception& ex) {
+            RESTC_CPP_LOG_DEBUG_("GetReply: exception from StartReceiveFromServer: " << ex.what());
+            throw;
+        }
+
+        RESTC_CPP_LOG_TRACE_("GetReply: Returned from StartReceiveFromServer. code=" << reply->GetResponseCode());
 
         const auto http_code = reply->GetResponseCode();
         if (http_code == http_301 || http_code == http_302) {
@@ -478,10 +940,15 @@ private:
                 throw ProtocolException(
                     "No Location header in redirect reply");
             }
+            RESTC_CPP_LOG_TRACE_("GetReply: RedirectException. location=" << *redirect_location);
             throw RedirectException(http_code, *redirect_location, move(reply));
         }
 
-        ValidateReply(*reply);
+        if (properties_->throwOnHttpError) {
+            RESTC_CPP_LOG_TRACE_("GetReply: Calling ValidateReply");
+            ValidateReply(*reply);
+            RESTC_CPP_LOG_TRACE_("GetReply: returning from ValidateReply");
+        }
 
         /* Return the reply. At this time the reply headers and body
             * is returned. However, the body may or may not be

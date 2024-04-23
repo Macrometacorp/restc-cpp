@@ -52,6 +52,11 @@
 #   define RESTC_CPP_IO_BUFFER_SIZE (1024 * 16)
 #endif
 
+#define RESTC_CPP_IN_COROUTINE_CATCH_ALL \
+    catch (boost::coroutines::detail::forced_unwind const&) { \
+       throw; /* required for Boost Coroutine! */ \
+    } catch (...)
+
 namespace restc_cpp {
 
 class RestClient;
@@ -81,6 +86,14 @@ struct Headers : public std::multimap<std::string, std::string, ciLessLibC>  {
         }
 
         return insert({key, {}})->second;
+    }
+
+    Headers& operator += (const Headers& nh) {
+        for(auto& h: nh) {
+           operator [] (h.first) = h.second;
+        }
+
+        return *this;
     }
 };
 
@@ -123,9 +136,11 @@ public:
     };
 
     struct Proxy {
-        enum class Type { NONE, HTTP };
+        enum class Type { NONE, HTTP, SOCKS5 };
         Type type = Type::NONE;
         std::string address;
+
+        const std::string& GetName();
     };
 
     using args_t = std::deque<Arg>;
@@ -147,7 +162,9 @@ public:
         using ptr_t = std::shared_ptr<Properties>;
         using redirect_fn_t = std::function<void (int code, std::string& url, 
                                                   const Reply& reply)>;
+        using general_callback_t = std::function<void()>;
 
+        bool tcpNodelay = true;
         int maxRedirects = 3;
         int connectTimeoutMs = (1000 * 12);
         int sendTimeoutMs = (1000 * 12); // For each IO operation
@@ -161,6 +178,15 @@ public:
         args_t args;
         Proxy proxy;
         redirect_fn_t redirectFn;
+        general_callback_t beforeWriteFn;
+        general_callback_t afterWriteFn;
+        std::string bindToLocalAddress; // host:port
+#ifdef  RESTC_CPP_THREADED_CTX
+        size_t threads = 4; // Threads created for the Client.
+#else
+        size_t threads = 1;
+#endif
+        bool throwOnHttpError = true; // If false, the user must detect and deal with the error
     };
 
     virtual const Properties& GetProperties() const = 0;
@@ -270,6 +296,8 @@ public:
  */
 class Context {
 public:
+    virtual ~Context() noexcept = default;
+
     virtual boost::asio::yield_context& GetYield() = 0;
     virtual RestClient& GetClient() = 0;
 
@@ -353,6 +381,15 @@ public:
      * fn, but rather execute long-running (more than a few milliseconds)
      * tasks in worker-threads. Do not wait for input or sleep() inside
      * the co-routine.
+     *
+     * \param fn Functor to call. This functor should be considered `noexcept`.
+     *      If an exception is thrown from the functor and not caught, the
+     *      library will call `std::terminate()`. This is because there is
+     *      no simple way to communicate from the library back to your code that
+     *      some operation inside the functor failed and did not handle that
+     *      exception. If you in stead want to have the exception propagated to
+     *      another thread, where you can deal with it, use `ProcessWithPromise()`
+     *      or `ProcessWithPromiseT()`.
      */
     virtual void Process(const prc_fn_t& fn) = 0;
 
@@ -383,6 +420,12 @@ public:
         return move(future);
     }
 
+    /*! Process from within an existing coroutine */
+    template <typename T>
+    T ProcessWithYield(const std::function<T (Context& ctx)>& fn, boost::asio::yield_context& yield) {
+        auto ctx = Context::Create(yield, *this);
+        return fn(yield);
+    }
 
     virtual std::shared_ptr<ConnectionPool> GetConnectionPool() = 0;
     virtual boost::asio::io_service& GetIoService() = 0;
@@ -392,17 +435,41 @@ public:
 #endif
 
     /*! Shut down the worker-thread when the work-queue is empty.
-
-        \param wait Wait until the worker thread is shut down if true
-
+     *
+     *   \param wait Wait until the worker thread is shut down if true
      */
     virtual void CloseWhenReady(bool wait = true) = 0;
+
+    /*! Check if the client is closing
+     *
+     *  \deprecated use `IsClosing()` in stead.
+     */
+    [[deprecated( "use `IsClosing()` in stead" )]]
+    virtual bool IsClosed() const noexcept {
+        return IsClosing();
+    }
+
+    /*! Check if the client is closing
+     *
+     * This is true after `CloseWhenReady()` has been called or
+     * the rest-client is going out of scope, but some requests
+     * are still being served.
+     */
+    virtual bool IsClosing() const noexcept = 0;
 
     /*! Factory */
     static std::unique_ptr<RestClient> Create();
 
 #ifdef RESTC_CPP_WITH_TLS
-	static std::unique_ptr<RestClient> Create(std::shared_ptr<boost::asio::ssl::context> ctx);
+    static std::unique_ptr<RestClient> Create(
+            std::shared_ptr<boost::asio::ssl::context> ctx);
+    static std::unique_ptr<RestClient> Create(
+            std::shared_ptr<boost::asio::ssl::context> ctx,
+            const boost::optional<Request::Properties>& properties);
+    static std::unique_ptr<RestClient> Create(
+            std::shared_ptr<boost::asio::ssl::context> ctx,
+            const boost::optional<Request::Properties>& properties,
+            boost::asio::io_service& ioservice);
 #endif
 
     static std::unique_ptr<RestClient>
@@ -419,6 +486,7 @@ public:
 
     static std::unique_ptr<RestClient>
         Create(boost::asio::io_service& ioservice);
+
 
     protected:
         virtual std::unique_ptr<DoneHandler> GetDoneHandler() = 0;

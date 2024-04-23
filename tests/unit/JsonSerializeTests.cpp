@@ -1,20 +1,38 @@
 
+#include <map>
+
+#if (__cplusplus >= 201703L)
+#   include <optional>
+#endif
+
+
 // Include before boost::log headers
 #include "restc-cpp/logging.h"
-
-#include <boost/log/core.hpp>
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
 #include <boost/fusion/adapted.hpp>
 
 #include "restc-cpp/restc-cpp.h"
-#include "restc-cpp/SerializeJson.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 
+#include "gtest/gtest.h"
 #include "restc-cpp/test_helper.h"
-#include "lest/lest.hpp"
 
+struct Data {
+    int d = 123;
+};
+
+struct NoData {
+    int d = 321;
+};
+
+
+namespace std {
+    string to_string(const Data& d) {
+        return to_string(d.d);
+    }
+}
+
+#include "restc-cpp/SerializeJson.h"
 
 using namespace std;
 using namespace restc_cpp;
@@ -26,6 +44,8 @@ struct Person {
     : id{id_}, name{std::move(name_)}, balance{balance_}
     {}
 
+    Person& operator = (const Person&) = default;
+    Person& operator = (Person&&) = default;
     Person() = default;
     Person(const Person&) = default;
     Person(Person&&) = default;
@@ -34,6 +54,84 @@ struct Person {
     std::string name;
     double balance = 0;
 };
+
+#if (__cplusplus >= 201703L)
+
+struct Number {
+    std::optional<int> value;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(Number,
+    (std::optional<int>, value)
+);
+
+struct Bool {
+    bool value = false;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(Bool,
+    (bool, value)
+);
+
+struct Int {
+    int value = 0;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(Int,
+    (int, value)
+);
+
+struct Numbers {
+    int intval = 0;
+    size_t sizetval = 0;
+    uint32_t uint32 = 0;
+    int64_t int64val = 0;
+    uint64_t uint64val = 0;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(Numbers,
+    (int, intval)
+    (size_t, sizetval)
+    (uint32_t, uint32)
+    (int64_t, int64val)
+    (uint64_t, uint64val)
+);
+
+struct String {
+    std::optional<string> value;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(String,
+    (std::optional<std::string>, value)
+);
+
+struct Pet {
+    std::string name;
+    std::string kind;
+    std::optional<string> friends;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    Pet,
+    (std::string, name)
+    (std::string, kind)
+    (std::optional<string>, friends)
+)
+
+struct House {
+    std::optional<bool> is_enabled;
+    std::optional<Person> person;
+    std::optional<Pet> pet;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    House,
+    (std::optional<bool>, is_enabled)
+    (std::optional<Person>, person)
+    (std::optional<Pet>, pet)
+)
+
+#endif
 
 BOOST_FUSION_ADAPT_STRUCT(
     Person,
@@ -55,6 +153,23 @@ BOOST_FUSION_ADAPT_STRUCT(
     (std::string, quote)
 )
 
+struct DataHolder {
+    Data data;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    DataHolder,
+    (Data, data)
+)
+
+struct NoDataHolder {
+    NoData data;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    NoDataHolder,
+    (NoData, data)
+)
 
 
 struct Group {
@@ -91,9 +206,7 @@ BOOST_FUSION_ADAPT_STRUCT(
     (std::deque<Person>, even_more_members)
 )
 
-const lest::test specification[] = {
-
-STARTCASE(SerializeSimpleObject) {
+TEST(JsonSerialize, SerializeSimpleObject) {
     Person person = { 100, "John Doe"s, 123.45 };
 
     StringBuffer s;
@@ -104,12 +217,12 @@ STARTCASE(SerializeSimpleObject) {
 
     serializer.Serialize();
 
-    CHECK_EQUAL(R"({"id":100,"name":"John Doe","balance":123.45})"s,
+    EXPECT_EQ(R"({"id":100,"name":"John Doe","balance":123.45})"s,
                 s.GetString());
 
-} ENDCASE
+}
 
-STARTCASE(SerializeNestedObject) {
+TEST(JsonSerialize, SerializeNestedObject) {
     Group group = Group(string("Group name"), 99, Person( 100, string("John Doe"), 123.45 ));
 
     StringBuffer s;
@@ -121,12 +234,12 @@ STARTCASE(SerializeNestedObject) {
     serializer.IgnoreEmptyMembers(false);
     serializer.Serialize();
 
-    CHECK_EQUAL(R"({"name":"Group name","gid":99,"leader":{"id":100,"name":"John Doe","balance":123.45},"members":[],"more_members":[],"even_more_members":[]})"s,
+    EXPECT_EQ(R"({"name":"Group name","gid":99,"leader":{"id":100,"name":"John Doe","balance":123.45},"members":[],"more_members":[],"even_more_members":[]})"s,
                 s.GetString());
 
-} ENDCASE
+}
 
-STARTCASE(SerializeVector)
+TEST(JsonSerialize, SerializeVector)
 {
     std::vector<int> ints = {-1,2,3,4,5,6,7,8,9,-10};
 
@@ -138,12 +251,12 @@ STARTCASE(SerializeVector)
 
     serializer.Serialize();
 
-    CHECK_EQUAL(R"([-1,2,3,4,5,6,7,8,9,-10])"s,
+    EXPECT_EQ(R"([-1,2,3,4,5,6,7,8,9,-10])"s,
                 s.GetString());
 
-} ENDCASE
+}
 
-STARTCASE(SerializeList) {
+TEST(JsonSerialize, SerializeList) {
     std::list<unsigned int> ints = {1,2,3,4,5,6,7,8,9,10};
 
     StringBuffer s;
@@ -154,12 +267,12 @@ STARTCASE(SerializeList) {
 
     serializer.Serialize();
 
-    CHECK_EQUAL(R"([1,2,3,4,5,6,7,8,9,10])"s,
+    EXPECT_EQ(R"([1,2,3,4,5,6,7,8,9,10])"s,
                 s.GetString());
 
-} ENDCASE
+}
 
-STARTCASE(SerializeNestedVector)
+TEST(JsonSerialize, SerializeNestedVector)
 {
     std::vector<std::vector<int>> nested_ints = {{-1,2,3},{4,5,-6}};
 
@@ -171,12 +284,12 @@ STARTCASE(SerializeNestedVector)
 
     serializer.Serialize();
 
-    CHECK_EQUAL(R"([[-1,2,3],[4,5,-6]])"s,
+    EXPECT_EQ(R"([[-1,2,3],[4,5,-6]])"s,
                 s.GetString());
 
-} ENDCASE
+}
 
-STARTCASE(DeserializeSimpleObject) {
+TEST(JsonSerialize, DeserializeSimpleObject) {
     Person person;
     std::string json = R"({ "id" : 100, "name" : "John Longdue Doe", "balance" : 123.45 })";
 
@@ -185,12 +298,12 @@ STARTCASE(DeserializeSimpleObject) {
     StringStream ss(json.c_str());
     reader.Parse(ss, handler);
 
-    CHECK_EQUAL(person.id, 100);
-    CHECK_EQUAL(person.name, "John Longdue Doe");
-    CHECK_EQUAL(person.balance, 123.45);
-} ENDCASE
+    EXPECT_EQ(person.id, 100);
+    EXPECT_EQ(person.name, "John Longdue Doe");
+    EXPECT_EQ(person.balance, 123.45);
+}
 
-STARTCASE(DeserializeNestedObject) {
+TEST(JsonSerialize, DeserializeNestedObject) {
     assert(boost::fusion::traits::is_sequence<Group>::value);
     assert(boost::fusion::traits::is_sequence<Person>::value);
 
@@ -207,34 +320,34 @@ STARTCASE(DeserializeNestedObject) {
     StringStream ss(json.c_str());
     reader.Parse(ss, handler);
 
-    CHECK_EQUAL(1, group.gid);
-    CHECK_EQUAL("qzar"s, group.name);
-    CHECK_EQUAL(100, group.leader.id);
-    CHECK_EQUAL("Dolly Doe"s, group.leader.name);
-    CHECK_EQUAL(123.45, group.leader.balance);
-    CHECK_EQUAL(2, static_cast<int>(group.members.size()));
-    CHECK_EQUAL(101, group.members[0].id);
-    CHECK_EQUAL("m1"s, group.members[0].name);
-    CHECK_EQUAL(0.0, group.members[0].balance);
-    CHECK_EQUAL(102, group.members[1].id);
-    CHECK_EQUAL("m2"s, group.members[1].name);
-    CHECK_EQUAL(1.0, group.members[1].balance);
-    CHECK_EQUAL(2, static_cast<int>(group.more_members.size()));
-    CHECK_EQUAL(103, group.more_members.front().id);
-    CHECK_EQUAL("m3"s, group.more_members.front().name);
-    CHECK_EQUAL(0.1, group.more_members.front().balance);
-    CHECK_EQUAL(104, group.more_members.back().id);
-    CHECK_EQUAL("m4"s, group.more_members.back().name);
-    CHECK_EQUAL(2.0, group.more_members.back().balance);
-    CHECK_EQUAL(321, group.even_more_members.front().id);
-    CHECK_EQUAL("m10"s, group.even_more_members.front().name);
-    CHECK_EQUAL(0.1, group.even_more_members.front().balance);
-    CHECK_EQUAL(322, group.even_more_members.back().id);
-    CHECK_EQUAL("m11"s, group.even_more_members.back().name);
-    CHECK_EQUAL(22.0, group.even_more_members.back().balance);
-} ENDCASE
+    EXPECT_EQ(1, group.gid);
+    EXPECT_EQ("qzar"s, group.name);
+    EXPECT_EQ(100, group.leader.id);
+    EXPECT_EQ("Dolly Doe"s, group.leader.name);
+    EXPECT_EQ(123.45, group.leader.balance);
+    EXPECT_EQ(2, static_cast<int>(group.members.size()));
+    EXPECT_EQ(101, group.members[0].id);
+    EXPECT_EQ("m1"s, group.members[0].name);
+    EXPECT_EQ(0.0, group.members[0].balance);
+    EXPECT_EQ(102, group.members[1].id);
+    EXPECT_EQ("m2"s, group.members[1].name);
+    EXPECT_EQ(1.0, group.members[1].balance);
+    EXPECT_EQ(2, static_cast<int>(group.more_members.size()));
+    EXPECT_EQ(103, group.more_members.front().id);
+    EXPECT_EQ("m3"s, group.more_members.front().name);
+    EXPECT_EQ(0.1, group.more_members.front().balance);
+    EXPECT_EQ(104, group.more_members.back().id);
+    EXPECT_EQ("m4"s, group.more_members.back().name);
+    EXPECT_EQ(2.0, group.more_members.back().balance);
+    EXPECT_EQ(321, group.even_more_members.front().id);
+    EXPECT_EQ("m10"s, group.even_more_members.front().name);
+    EXPECT_EQ(0.1, group.even_more_members.front().balance);
+    EXPECT_EQ(322, group.even_more_members.back().id);
+    EXPECT_EQ("m11"s, group.even_more_members.back().name);
+    EXPECT_EQ(22.0, group.even_more_members.back().balance);
+}
 
-STARTCASE(DeserializeIntVector) {
+TEST(JsonSerialize, DeserializeIntVector) {
     std::string json = R"([1,2,3,4,5,6,7,8,9,10])";
 
     std::vector<int> ints;
@@ -243,15 +356,15 @@ STARTCASE(DeserializeIntVector) {
     StringStream ss(json.c_str());
     reader.Parse(ss, handler);
 
-    CHECK_EQUAL(10, static_cast<int>(ints.size()));
+    EXPECT_EQ(10, static_cast<int>(ints.size()));
 
     auto val = 0;
     for(auto v : ints) {
-        CHECK_EQUAL(++val, v);
+        EXPECT_EQ(++val, v);
     }
-} ENDCASE
+}
 
-STARTCASE(DeserializeNestedArray) {
+TEST(JsonSerialize, DeserializeNestedArray) {
     std::string json = R"([[1, 2, 3],[4, 5, 6]])";
 
     std::vector<std::vector<int>> nested_ints;
@@ -260,18 +373,46 @@ STARTCASE(DeserializeNestedArray) {
     StringStream ss(json.c_str());
     reader.Parse(ss, handler);
 
-    CHECK_EQUAL(2, static_cast<int>(nested_ints.size()));
+    EXPECT_EQ(2, static_cast<int>(nested_ints.size()));
 
     for(int i = 0; i < 2; ++i) {
-        CHECK_EQUAL(3, static_cast<int>(nested_ints[i].size()));
+        EXPECT_EQ(3, static_cast<int>(nested_ints[i].size()));
 
         for(int j = 0; j < 3; ++j) {
-            CHECK_EQUAL(i * 3 + j + 1, nested_ints[i][j]);
+            EXPECT_EQ(i * 3 + j + 1, nested_ints[i][j]);
         }
     }
-} ENDCASE
+}
 
-STARTCASE(DeserializeMemoryLimit)
+TEST(JsonSerialize, DeserializeKeyValueMap) {
+    std::string json = R"({"key1":"value1", "key2":"value2"})";
+
+    std::map<string, string> keyvalue;
+    RapidJsonDeserializer<decltype(keyvalue)> handler(keyvalue);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(keyvalue["key1"], "value1");
+    EXPECT_EQ(keyvalue["key2"], "value2");
+
+}
+
+TEST(JsonSerialize, DeserializeKeyValueMapWithObject) {
+    string json = R"({"dog1":{ "id" : 1, "name" : "Ares", "balance" : 123.45}, "dog2":{ "id" : 2, "name" : "Nusse", "balance" : 234.56}})";
+
+    map<string, Person> keyvalue;
+    RapidJsonDeserializer<decltype(keyvalue)> handler(keyvalue);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(keyvalue["dog1"].name, "Ares"s);
+    EXPECT_EQ(keyvalue["dog2"].name, "Nusse"s);
+
+}
+
+TEST(JsonSerialize, DeserializeMemoryLimit)
 {
 
     Quotes q;
@@ -301,10 +442,10 @@ STARTCASE(DeserializeMemoryLimit)
     Reader reader;
     StringStream ss(json.c_str());
 
-    EXPECT_THROWS_AS(reader.Parse(ss, handler), ConstraintException);
-} ENDCASE
+    EXPECT_THROW(reader.Parse(ss, handler), ConstraintException);
+}
 
-STARTCASE(MissingObjectName) {
+TEST(JsonSerialize, MissingObjectName) {
     Person person;
     RapidJsonDeserializer<Person> handler(person);
     Reader reader;
@@ -354,9 +495,9 @@ STARTCASE(MissingObjectName) {
         reader.Parse(ss, handler);
     }
 
-} ENDCASE
+}
 
-STARTCASE(MissingPropertyName) {
+TEST(JsonSerialize, MissingPropertyName) {
     Person person;
     std::string json = R"({ "id" : 100, "name" : "John Longdue Doe", "balance" : 123.45, "foofoo":"foo", "oofoof":"oof" })";
 
@@ -364,9 +505,9 @@ STARTCASE(MissingPropertyName) {
     Reader reader;
     StringStream ss(json.c_str());
     reader.Parse(ss, handler);
-} ENDCASE
+}
 
-STARTCASE(SkipMissingObjectNameNotAllowed) {
+TEST(JsonSerialize, SkipMissingObjectNameNotAllowed) {
     Person person;
     serialize_properties_t sprop;
     sprop.ignore_unknown_properties = false;
@@ -375,21 +516,21 @@ STARTCASE(SkipMissingObjectNameNotAllowed) {
 
     {
         StringStream ss( R"({ "id" : 100, "name" : "John Longdue Doe", "balance" : 123.45, "foofoo":{} })");
-        EXPECT_THROWS_AS(reader.Parse(ss, handler), UnknownPropertyException);
+        EXPECT_THROW(reader.Parse(ss, handler), UnknownPropertyException);
     }
 
     {
         StringStream ss( R"({ "id" : 100, "name" : "John Longdue Doe", "balance" : 123.45, "foofoo":{"first":false, "second":12345}})");
-        EXPECT_THROWS_AS(reader.Parse(ss, handler), UnknownPropertyException);
+        EXPECT_THROW(reader.Parse(ss, handler), UnknownPropertyException);
     }
 
     {
         StringStream ss( R"({ "id" : 100, "name" : "John Longdue Doe", "balance" : 123.45, "foofoo":{"sub":{"sub2":{}, "teste":"yes"}}})");
-        EXPECT_THROWS_AS(reader.Parse(ss, handler), UnknownPropertyException);
+        EXPECT_THROW(reader.Parse(ss, handler), UnknownPropertyException);
     }
-} ENDCASE
+}
 
-STARTCASE(MissingPropertyNameNotAllowed) {
+TEST(JsonSerialize, MissingPropertyNameNotAllowed) {
     Person person;
     std::string json = R"({ "id" : 100, "name" : "John Longdue Doe", "balance" : 123.45, "foofoo":"foo", "oofoof":"oof" })";
 
@@ -398,21 +539,409 @@ STARTCASE(MissingPropertyNameNotAllowed) {
     RapidJsonDeserializer<Person> handler(person, sprop);
     Reader reader;
     StringStream ss(json.c_str());
-    EXPECT_THROWS_AS(reader.Parse(ss, handler), UnknownPropertyException);
-} ENDCASE
+    EXPECT_THROW(reader.Parse(ss, handler), UnknownPropertyException);
+}
 
+#if (__cplusplus >= 201703L)
+TEST(JsonSerialize, DesearializeOptionalBoolEmpty) {
+    House house;
+    std::string json = R"({ "is_enabled": null })"; // No value
 
-}; // lest
+    serialize_properties_t sprop;
+    sprop.ignore_unknown_properties = false;
+    RapidJsonDeserializer<House> handler(house, sprop);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+    EXPECT_EQ(house.is_enabled.has_value(), false);
+}
 
+TEST(JsonSerialize, DesearializeOptionalBoolTrue) {
+    House house;
+    std::string json = R"({ "is_enabled": true })"; // No value
 
-int main( int argc, char * argv[] )
-{
-    namespace logging = boost::log;
-    logging::core::get()->set_filter
-    (
-        logging::trivial::severity >= logging::trivial::trace
-    );
-    return lest::run( specification, argc, argv );
+    serialize_properties_t sprop;
+    sprop.ignore_unknown_properties = false;
+    RapidJsonDeserializer<House> handler(house, sprop);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+    EXPECT_EQ(house.is_enabled.has_value(), true);
+    EXPECT_EQ(house.is_enabled.value(), true);
+}
+
+TEST(JsonSerialize, DesearializeOptionalBoolFalse) {
+    House house;
+    std::string json = R"({ "is_enabled": false })"; // No value
+
+    serialize_properties_t sprop;
+    sprop.ignore_unknown_properties = false;
+    RapidJsonDeserializer<House> handler(house, sprop);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+    EXPECT_EQ(house.is_enabled.has_value(), true);
+    EXPECT_EQ(house.is_enabled.value(), false);
+}
+
+TEST(JsonSerialize, DesearializeOptionalObjctEmpty) {
+    House house;
+    house.person = Person{1, "foo", 0.0};
+    std::string json = R"({ "person": null })"; // No value
+
+    serialize_properties_t sprop;
+    sprop.ignore_unknown_properties = false;
+    RapidJsonDeserializer<House> handler(house, sprop);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+    EXPECT_EQ(house.person.has_value(), false);
+}
+
+TEST(JsonSerialize, DesearializeOptionalObjctAssign) {
+    House house;
+    std::string json = R"({ "person": { "id" : 100, "name" : "John Doe", "balance" : 123.45 }})";
+
+    serialize_properties_t sprop;
+    sprop.ignore_unknown_properties = false;
+    SerializeFromJson(house, json, sprop);
+
+    EXPECT_EQ(house.person.has_value(), true);
+    EXPECT_EQ(house.person->id, 100);
+    EXPECT_EQ(house.person->name, "John Doe");
+    EXPECT_EQ(house.person->balance, 123.45);
+}
+
+TEST(JsonSerialize, SerializeOptionalAllEmptyShowEmpty) {
+    House house;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(false);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"is_enabled":null,"person":null,"pet":null})"s,
+                s.GetString());
+
 }
 
 
+TEST(JsonSerialize, SerializeOptionalAllEmpty) {
+    House house;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeOptionalBoolTrue) {
+    House house;
+    house.is_enabled = true;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"is_enabled":true})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeOptionalBoolFalse) {
+    House house;
+    house.is_enabled = false;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"is_enabled":false})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeOptionalObjectWithData) {
+    House house;
+    house.person = Person{};
+    house.person->id = 123;
+    house.person->name = "Donald the looser";
+    house.person->balance = 123.45;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"person":{"id":123,"name":"Donald the looser","balance":123.45}})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeOptionalObjectWithRecursiveOptionalNoData) {
+    House house;
+    house.person = Person{};
+    house.person->id = 123;
+    house.person->name = "Donald the looser";
+    house.person->balance = 123.45;
+    house.pet = Pet{};
+    house.pet->name = "Fido";
+    house.pet->kind = "Dog";
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"person":{"id":123,"name":"Donald the looser","balance":123.45},"pet":{"name":"Fido","kind":"Dog"}})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeOptionalObjectWithRecursiveOptionalData) {
+    House house;
+    house.person = Person{};
+    house.person->id = 123;
+    house.person->name = "Donald the looser";
+    house.person->balance = 123.45;
+    house.pet = Pet{};
+    house.pet->name = "Fido";
+    house.pet->kind = "Dog";
+    house.pet->friends = "PusPus the Cat";
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(house), decltype(writer)>
+        serializer(house, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"person":{"id":123,"name":"Donald the looser","balance":123.45},"pet":{"name":"Fido","kind":"Dog","friends":"PusPus the Cat"}})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeIgnoreEmptyString) {
+    Pet pet;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(pet), decltype(writer)>
+        serializer(pet, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({})"s,
+                s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeEmptyOptionalWithZeroValue) {
+
+    Number data;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(data), decltype(writer)>
+        serializer(data, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({})"s, s.GetString());
+
+}
+
+
+TEST(JsonSerialize, SerializeOptionalWithZeroValue) {
+
+    Number data;
+    data.value = 0;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(data), decltype(writer)>
+        serializer(data, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"value":0})"s, s.GetString());
+
+}
+
+TEST(JsonSerialize, SerializeOptionalWithEmptyStringValue) {
+
+    String data;
+    data.value = "";
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(data), decltype(writer)>
+        serializer(data, writer);
+
+    serializer.IgnoreEmptyMembers(true);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"value":""})"s, s.GetString());
+
+}
+
+TEST(JsonSerialize, DeserializeBoolFromStringTrue) {
+    Bool bval;
+    std::string json = R"({ "value" : "true" })";
+
+    RapidJsonDeserializer<Bool> handler(bval);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(bval.value, true);
+}
+
+TEST(JsonSerialize, DeserializeBoolFromStringFalse) {
+    Bool bval{true};
+    std::string json = R"({ "value" : "false" })";
+
+    RapidJsonDeserializer<Bool> handler(bval);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(bval.value, false);
+}
+
+
+TEST(JsonSerialize, DeserializeBoolFromIntTrue) {
+    Bool bval;
+    std::string json = R"({ "value" : 10 })";
+
+    RapidJsonDeserializer<Bool> handler(bval);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(bval.value, true);
+}
+
+TEST(JsonSerialize, DeserializeBoolFromIntFalse) {
+    Bool bval{true};
+    std::string json = R"({ "value" : 0 })";
+
+    RapidJsonDeserializer<Bool> handler(bval);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(bval.value, false);
+}
+
+TEST(JsonSerialize, DeserializeIntFromString1) {
+    Int ival;
+    std::string json = R"({ "value" : "1" })";
+
+    RapidJsonDeserializer<Int> handler(ival);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(ival.value, 1);
+}
+
+TEST(JsonSerialize, DeserializeNumbersFromStrings) {
+    Numbers numbers;
+    std::string json = R"({ "intval" : "-123", "sizetval": "55", "uint32": "123456789", "int64val": "-9876543212345", "uint64val": "123451234512345" })";
+
+    RapidJsonDeserializer<Numbers> handler(numbers);
+    Reader reader;
+    StringStream ss(json.c_str());
+    reader.Parse(ss, handler);
+
+    EXPECT_EQ(numbers.intval, -123);
+    EXPECT_EQ(numbers.sizetval, 55);
+    EXPECT_EQ(numbers.uint32, 123456789);
+    EXPECT_EQ(numbers.int64val, -9876543212345);
+    EXPECT_EQ(numbers.uint64val, 123451234512345);
+}
+
+TEST(JsonSerialize, DeserializeWithStdToStringSpecialization) {
+
+    DataHolder obj;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(obj), decltype(writer)>
+        serializer(obj, writer);
+
+    serializer.IgnoreEmptyMembers(false);
+    serializer.Serialize();
+
+    EXPECT_EQ(R"({"data":"123"})"s, s.GetString());
+}
+
+
+TEST(JsonSerialize, DeserializeWithoutStdToStringSpecialization) {
+
+    NoDataHolder obj;
+
+    StringBuffer s;
+    Writer<StringBuffer> writer(s);
+
+    RapidJsonSerializer<decltype(obj), decltype(writer)>
+        serializer(obj, writer);
+
+    serializer.IgnoreEmptyMembers(false);
+
+    EXPECT_THROW(serializer.Serialize(), ParseException);
+}
+
+
+#endif // C++ 17
+
+int main( int argc, char * argv[] )
+{
+    RESTC_CPP_TEST_LOGGING_SETUP("debug");
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();;
+}
+
+
+ 

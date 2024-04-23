@@ -7,13 +7,8 @@
 #include "restc-cpp/RequestBuilder.h"
 #include "restc-cpp/IteratorFromJsonSerializer.h"
 
-#include <boost/log/core.hpp>
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
-
+#include "gtest/gtest.h"
 #include "restc-cpp/test_helper.h"
-#include "lest/lest.hpp"
-
 
 using namespace std;
 using namespace restc_cpp;
@@ -59,10 +54,7 @@ BOOST_FUSION_ADAPT_STRUCT(
 )
 
 
-const lest::test specification[] = {
-
-TEST(TestCRUD)
-{
+TEST(ManyConnections, CRUD) {
     mutex mutex;
     mutex.lock();
 
@@ -93,8 +85,8 @@ TEST(TestCRUD)
             IteratorFromJsonSerializer<Post> results(*reply);
 
             auto it = results.begin();
-            RESTC_CPP_LOG_DEBUG << "Iteration #" << i
-                << " Read item # " << it->id;
+            RESTC_CPP_LOG_DEBUG_("Iteration #" << i
+                << " Read item # " << it->id);
 
             promises[i].set_value(i);
             // Wait for all connections to be ready
@@ -119,32 +111,27 @@ TEST(TestCRUD)
     for(auto& future : futures) {
         try {
             auto i = future.get();
-            RESTC_CPP_LOG_DEBUG << "Iteration #" << i << " is done";
+            RESTC_CPP_LOG_DEBUG_("Iteration #" << i << " is done");
             ++successful_connections;
         } catch (const std::exception& ex) {
-            RESTC_CPP_LOG_ERROR << "Future threw up: " << ex.what();
+            RESTC_CPP_LOG_ERROR_("Future threw up: " << ex.what());
         }
     }
 
-    RESTC_CPP_LOG_INFO << "We had " << successful_connections
-        << " successful connections.";
+    RESTC_CPP_LOG_INFO_("We had " << successful_connections
+        << " successful connections.");
 
-    CHECK_EQUAL(CONNECTIONS, successful_connections);
+    EXPECT_EQ(CONNECTIONS, successful_connections);
 
     mutex.unlock();
 
     rest_client->CloseWhenReady();
 }
 
-}; //lest
 
 int main( int argc, char * argv[] )
 {
-    namespace logging = boost::log;
-    logging::core::get()->set_filter
-    (
-        logging::trivial::severity >= logging::trivial::debug
-    );
-
-    return lest::run( specification, argc, argv );
+    RESTC_CPP_TEST_LOGGING_SETUP("debug");
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();;
 }

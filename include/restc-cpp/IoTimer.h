@@ -20,7 +20,7 @@ public:
     using ptr_t = std::shared_ptr<IoTimer>;
     using close_t = std::function<void ()>;
     
-#if (BOOST_VERSION/100000) >= 1 && ((BOOST_VERSION/100)%1000) > 69
+#if (BOOST_VERSION >= 106900)
     using asio_premature_deprecation_workaround_t = boost::asio::ip::tcp::socket::executor_type;
 #else
     using asio_premature_deprecation_workaround_t = boost::asio::io_service;
@@ -71,7 +71,7 @@ public:
     void Cancel() {
         if (is_active_) {
             is_active_ = false;
-            RESTC_CPP_LOG_TRACE << "Canceled timer " << timer_name_;
+            RESTC_CPP_LOG_TRACE_("Canceled timer " << timer_name_);
         }
     }
 
@@ -109,13 +109,13 @@ public:
 
         std::weak_ptr<Connection> weak_connection = connection;
 
-        RESTC_CPP_LOG_TRACE << "Created timer " << timerName
-            << " for " << *connection;
+        RESTC_CPP_LOG_TRACE_("Created timer " << timerName
+            << " for " << *connection);
 
         return std::make_unique<Wrapper>(Create(
             timerName,
             milliseconds_timeout,
-#if (BOOST_VERSION/100000) >= 1 && ((BOOST_VERSION/100)%1000) > 69
+#if (BOOST_VERSION >= 106900)
             connection->GetSocket().GetSocket().get_executor(),
 #else
             connection->GetSocket().GetSocket().get_io_service(),
@@ -123,11 +123,14 @@ public:
             [weak_connection, timerName]() {
                 if (auto connection = weak_connection.lock()) {
                     if (connection->GetSocket().GetSocket().is_open()) {
-                        RESTC_CPP_LOG_TRACE
-                            << "Timer " << timerName << ": "
+                        RESTC_CPP_LOG_TRACE_("Timer " << timerName << ": "
                             << *connection
-                            << " timed out.";
-                        connection->GetSocket().Close(Socket::Reason::TIME_OUT);
+                            << " timed out.");
+                        try {
+                            connection->GetSocket().Close(Socket::Reason::TIME_OUT);
+                        } catch(std::exception& ex) {
+                            RESTC_CPP_LOG_WARN_("Caught exception while closing socket: " << ex.what());
+                        }
                     }
                 }
             }));

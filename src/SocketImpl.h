@@ -57,9 +57,12 @@ public:
 
     void AsyncConnect(const boost::asio::ip::tcp::endpoint& ep,
 					const std::string &host,
+                    bool tcpNodelay,
                     boost::asio::yield_context& yield) override {
         return WrapException<void>([&] {
             socket_.async_connect(ep, yield);
+            socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(tcpNodelay));
+            OnAfterConnect();
         });
     }
 
@@ -69,7 +72,7 @@ public:
 
     void Close(Reason reason) override {
         if (socket_.is_open()) {
-            RESTC_CPP_LOG_TRACE << "Closing " << *this;
+            RESTC_CPP_LOG_TRACE_("Closing " << *this);
             socket_.close();
         }
         reason_ = reason;

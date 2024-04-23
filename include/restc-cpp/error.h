@@ -89,6 +89,12 @@ struct ProtocolException : public RestcCppException
     : RestcCppException(cause) {}
 };
 
+struct AccessDeniedException : public RestcCppException
+{
+    AccessDeniedException(const std::string& cause)
+    : RestcCppException(cause) {}
+};
+
 struct ConstraintException : public RestcCppException
 {
     ConstraintException(const std::string& cause)
@@ -153,6 +159,12 @@ struct RequestTimeOutException : public RestcCppException
 {
     RequestTimeOutException()
     : RestcCppException("Request Timed Out") {}
+};
+
+struct FailedToResolveEndpointException : public RestcCppException
+{
+    FailedToResolveEndpointException(const std::string& what)
+    : RestcCppException(what) {}
 };
 
 } // namespace

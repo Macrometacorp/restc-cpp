@@ -4,9 +4,6 @@
 // Include before boost::log headers
 #include "restc-cpp/logging.h"
 
-#include <boost/log/core.hpp>
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/fusion/adapted.hpp>
 
@@ -14,28 +11,24 @@
 #include "restc-cpp/error.h"
 #include "restc-cpp/RequestBuilder.h"
 
+#include "gtest/gtest.h"
 #include "restc-cpp/test_helper.h"
-#include "lest/lest.hpp"
 
 
 using namespace std;
 using namespace restc_cpp;
 
-const lest::test specification[] = {
-
-TEST(TestFailedAuth)
-{
+TEST(Auth, Failed) {
     auto rest_client = RestClient::Create();
     rest_client->ProcessWithPromise([&](Context& ctx) {
 
-        EXPECT_THROWS_AS(ctx.Get(GetDockerUrl("http://localhost:3001/restricted/posts/1")),
+        EXPECT_THROW(ctx.Get(GetDockerUrl("http://localhost:3001/restricted/posts/1")),
                     HttpAuthenticationException);
 
     }).get();
-},
+}
 
-TEST(TestSuccessfulAuth)
-{
+TEST(Auth, Success) {
     auto rest_client = RestClient::Create();
     rest_client->ProcessWithPromise([&](Context& ctx) {
 
@@ -44,19 +37,15 @@ TEST(TestSuccessfulAuth)
             .BasicAuthentication("alice", "12345")
             .Execute();
 
-        CHECK_EQUAL(200, reply->GetResponseCode());
+        EXPECT_EQ(200, reply->GetResponseCode());
 
     }).get();
 }
 
-}; //lest
 
 int main( int argc, char * argv[] )
 {
-    namespace logging = boost::log;
-    logging::core::get()->set_filter
-    (
-        logging::trivial::severity >= logging::trivial::trace
-    );
-    return lest::run( specification, argc, argv );
+    RESTC_CPP_TEST_LOGGING_SETUP("debug");
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }

@@ -42,8 +42,9 @@ C++ HTTP Client from scratch. To see how this actually works, please see the
 
 Finally, in a world where the Internet is getting increasingly
 [dangerous](http://www.dailydot.com/layer8/bruce-schneier-internet-of-things/),
-and all kind of malicious parties, from your own government to international Mafia
-(with Putin in Moscow and the Clown in the White House, the differences is
+and all kind of malicious parties, from your own government to the international Mafia
+(with Putin in Moscow and other autocrats in parliaments and as head of state all over the world - 
+including USA, EU and Norway -, the differences is
 blurring out), search for vulnerabilities in your software stack to snoop, ddos,
 intercept and blackmail you and your customers/users - I have a strong emphasis
 on security in all software projects I'm involved in. I have limited the
@@ -74,12 +75,10 @@ using boost::asio with JSON serialization/deserialization.
 # Dependencies
 Restc-cpp depends on C++14 with its standard libraries and:
   - boost
-  - rapidjson (mature, ultra-fast, json sax, header-only library)
-  - lest (Unit test header only library) (If compiled with testing enabled)
+  - rapidjson (CMake will download and install rapidjson for the project)
+  - gtest (CMake will download and install gtest for the project if it is not installed)
   - openssl or libressl (If compiled with TLS support)
   - zlib (If compiled with compression support)
-
-rapidjson and lest are included as CMake external dependencies.
 
 # License
 MIT license. It is Free. Free as in speech. Free as in Free Air.
@@ -230,7 +229,8 @@ Please refer to the [tutorial](doc/Tutorial.md) for more examples.
 - Uses C++ / boost coroutines for application logic.
 - HTTP Redirects.
 - HTTP Basic Authentication.
-- Logging trough boost::log or trough your own log macros.
+- [Logging](doc/Logging.md) trough logfault, boost::log, std::clog or trough your own log macros or via a callback to whatever log framework you use.
+- Log-level for the library can be set at compile time (none, error, warn, info, debug, trace)
 - Connection Pool for fast re-use of existing server connections.
 - Compression (gzip, deflate).
 - JSON serialization to and from native C++ objects.
@@ -245,32 +245,44 @@ Please refer to the [tutorial](doc/Tutorial.md) for more examples.
   - Override RequestBody to let the library pull for data when required.
   - Write directly to the outgoing DataWriter when data is required.
   - Just provide a C++ object and let the library serialize it directly to the wire.
+- HTTP Proxy support
+- SOCKS5 Proxy support (naive implementatin for now, no support for authentication).
 
 # Current Status
 The project has been in public BETA since April 11th 2017.
 
-
 # Supported operating systems
 These are the operating systems where my Continues Integration (Jenkins) servers currently compiles the project and run all the tests:
 
- - Debian Stretch (Stable)
  - Debian Testing
- - Windows 10 / Microsoft Visual Studio 2017, Community version
- - Fedora 29
+ - Debian Bookworm
+ - Debian Bullseye
+ - Debian Buster
+ - Windows 10 / Microsoft Visual Studio 2019, Community version using vcpkg for dependencies
  - Ubuntu Xenial (LTS)
- - Ubuntu Bionic (LTS)
- - Centos 7 (latest) with devtoolset-7-gcc and (custom built) libbbost 1.69.0
- - macOS High Sierra (OS X)
+ - Ubuntu Jammy (LTS)
+
+Support for MacOS has been removed after Apples announcement that their love for privacy was just 
+a marketing gimmick.
+ 
+Fedora is currently disabled in my CI because of failures to start their Docker containers. (Work in progress). 
 
 The Jenkins setup is [here](ci/jenkins).
 
-This project does not use *Travis CI*, for two reasons. First, Travis CI is [not suitable for modern C++ development](https://github.com/travis-ci/travis-ci/issues/6300). They use outdated versions of Ubuntu and old compilers. There are work-arounds for some of the issues, but I prefer to use services that tries to be helpful to whatever I am doing. Secondly, rest-cpp needs to be tested under Microsoft Windows. Travis CI does not offer that. So I have built my own CI infrastructure using my own hardware. I use Jenkins on a VM with Ubuntu Xenial Xerus, 6 cores and 10 GB RAM with one slave running on a VM with Microsoft Windows Server 2016 with 4 cores and 8 GB RAM, and one slave on a Mac Mini. Using Docker to build with different Linux distributions on the main Jenkins server gives me better flexibility. It also immediately catches mistakes that break the build or test(s) on a specific Linux distribution or platform.
+I currently use my own CI infrastructure running on my own hardware. I use Jenkins on a VM with Debian Bullseye, and three slaves for Docker on Linux VM's, one slave running on a VM with Microsoft Windows 10 Pro. Using Docker to build with different Linux distributions gives me flexibility. It also immediately catches mistakes that break the build or test(s) on a specific Linux distribution or platform. Using my own infrastructure improves the security, as I don't share any credentials with 3rd party services or allow external access into my LAN.
 
+# Blog-posts about the project:
+  - [About version 0.90](https://lastviking.eu/restc_cpp_90.html)
+  - [restc-cpp tags on The Last Viking's Nest](https://lastviking.eu/_tags/restc-cpp.html)
 
 # Similar projects
-  - [JSON for Modern C++](https://nlohmann.github.io/json/) by Niels Lohmann.
-  - [json11 - tiny JSON library for C++11, providing JSON parsing and serialization](https://github.com/dropbox/json11)
+  - [RESTinCurl](https://github.com/jgaa/RESTinCurl) by me. Aimed at mobile applications, IoT and projects that already link with libcurl.
+  - [Boost.Beast](https://github.com/boostorg/beast) by Vinnie Falco. When you like to write many lines of code...
 
+  **Json serialization only**
+  - [Boost.Json](https://www.boost.org/doc/libs/1_83_0/libs/json/doc/html/index.html)
+  - [JSON for Modern C++](https://nlohmann.github.io/json/) by Niels Lohmann. My favorite json library, when I need to more than just static serialization.
+  - [json11 - tiny JSON library for C++11, providing JSON parsing and serialization](https://github.com/dropbox/json11)
 
 # More information
 - [Getting started](doc/GettingStarted.md)

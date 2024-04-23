@@ -2,9 +2,7 @@
 #ifndef RESTC_CPP_REQUEST_BUILDER_H_
 #define RESTC_CPP_REQUEST_BUILDER_H_
 
-#ifndef RESTC_CPP_H_
-#       error "Include restc-cpp.h first"
-#endif
+#include "restc-cpp/restc-cpp.h"
 
 #include <string>
 #include <assert.h>
@@ -13,6 +11,7 @@
 //#include "restc-cpp/DataWriter.h"
 #include "restc-cpp/RequestBody.h"
 #include "restc-cpp/RequestBodyWriter.h"
+#include "restc-cpp/helper.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 
@@ -46,67 +45,63 @@ public:
     RequestBuilder(Context& ctx)
     : ctx_{&ctx} {}
 
-    /*! Make a HTTP GET request */
-    RequestBuilder& Get(std::string url) {
+    /*! Make a HTTP request */
+    RequestBuilder& Req(std::string url, const Request::Type type) {
         assert(url_.empty());
         url_ = std::move(url);
         MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::GET;
+        type_ = type;
         return *this;
+    }
+
+    /*! Make a HTTP request */
+    template <typename T>
+    RequestBuilder& Req(std::string url, const Request::Type type, const T& args) {
+        assert(url_.empty());
+        url_ = std::move(url);
+        MAP_URL_FOR_TESTING(url_);
+        type_ = type;
+
+        for(const auto& a: args) {
+            Argument(a.first, a.second);
+        }
+
+        return *this;
+    }
+
+    /*! Make a HTTP GET request */
+    RequestBuilder& Get(std::string url) {
+        return Req(std::move(url), Request::Type::GET);
     }
 
     /*! Make a HTTP POST request */
     RequestBuilder& Post(std::string url) {
-        assert(url_.empty());
-        url_ = std::move(url);
-        MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::POST;
-        return *this;
+        return Req(std::move(url), Request::Type::POST);
     }
 
     /*! Make a HTTP PUT request */
     RequestBuilder& Put(std::string url) {
-        assert(url_.empty());
-        url_ = std::move(url);
-        MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::PUT;
-        return *this;
+        return Req(std::move(url), Request::Type::PUT);
     }
 
     /*! Make a HTTP DELETE request */
     RequestBuilder& Delete(std::string url) {
-        assert(url_.empty());
-        url_ = std::move(url);
-        MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::DELETE;
-        return *this;
+        return Req(std::move(url), Request::Type::DELETE);
     }
 
     /*! Make a HTTP OPTIONS request */
     RequestBuilder& Options(std::string url) {
-        assert(url_.empty());
-        url_ = std::move(url);
-        MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::OPTIONS;
-        return *this;
+        return Req(std::move(url), Request::Type::OPTIONS);
     }
 
     /*! Make a HTTP HEAD request */
     RequestBuilder& Head(std::string url) {
-        assert(url_.empty());
-        url_ = std::move(url);
-        MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::HEAD;
-        return *this;
+        return Req(std::move(url), Request::Type::HEAD);
     }
 
     /*! Make a HTTP PATCH request */
     RequestBuilder& Patch(std::string url) {
-        assert(url_.empty());
-        url_ = std::move(url);
-        MAP_URL_FOR_TESTING(url_);
-        type_ = Request::Type::PATCH;
-        return *this;
+        return Req(std::move(url), Request::Type::PATCH);
     }
 
      /*! Set a header
@@ -208,7 +203,7 @@ public:
      */
     RequestBuilder& Argument(std::string name, int64_t value) {
         return Argument(move(name), std::to_string(value));
-    }
+    } 
 
     /*! Supply your own RequestBody to the request
      */
@@ -352,6 +347,11 @@ public:
         return Header(transfer_encoding, chunked);
     }
 
+    RequestBuilder& Properties(Request::Properties::ptr_t properties) {
+        properties_ = std::move(properties);
+        return *this;
+    }
+
     std::unique_ptr<Request> Build() {
         assert(ctx_);
         static const std::string accept_encoding{"Accept-Encoding"};
@@ -367,8 +367,25 @@ public:
             }
         }
 #endif
-        return Request::Create(
+        auto req = Request::Create(
             url_, type_, ctx_->GetClient(), move(body_), args_, headers_, auth_);
+
+        auto orig = req->GetProperties();
+
+        if (properties_) {
+            // Merge the headers and args to get what we have already
+            // set in Request::Create
+            properties_->headers += orig.headers;
+
+            // Add the original args
+            properties_->args.insert(properties_->args.end(),
+                                     orig.args.begin(),
+                                     orig.args.end());
+
+            req->SetProperties(properties_);
+        }
+
+        return req;
     }
 
     /*! Exceute the request.
@@ -403,6 +420,7 @@ private:
     boost::optional<Request::headers_t> headers_;
     boost::optional<Request::args_t> args_;
     boost::optional<Request::auth_t> auth_;
+    Request::Properties::ptr_t properties_;
     std::unique_ptr<RequestBody> body_;
     bool disable_compression_ = false;
 #ifdef DEBUG

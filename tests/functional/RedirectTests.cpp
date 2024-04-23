@@ -5,15 +5,10 @@
 #include "restc-cpp/logging.h"
 #include "restc-cpp/ConnectionPool.h"
 
-#include <boost/log/core.hpp>
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
-
 #include "../src/ReplyImpl.h"
 
+#include "gtest/gtest.h"
 #include "restc-cpp/test_helper.h"
-#include "lest/lest.hpp"
-
 
 /* These url's points to a local Docker container with nginx, linked to
  * a jsonserver docker container with mock data.
@@ -26,72 +21,73 @@ const string http_redirect_loop_url = "http://localhost:3001/loop/posts";
 using namespace std;
 using namespace restc_cpp;
 
-const lest::test specification[] = {
-
-TEST(TestNoRedirects)
+TEST(Redirect, NoRedirects)
 {
     Request::Properties properties;
     properties.maxRedirects = 0;
 
     auto rest_client = RestClient::Create(properties);
-    rest_client->ProcessWithPromise([&](Context& ctx) {
+    auto f = rest_client->ProcessWithPromise([&](Context& ctx) {
 
-        EXPECT_THROWS_AS(
+        EXPECT_THROW(
             ctx.Get(GetDockerUrl(http_redirect_url)), ConstraintException);
 
-    }).get();
-},
+    });
 
-TEST(TestSingleRedirect)
-{
-    auto rest_client = RestClient::Create();
-    rest_client->ProcessWithPromise([&](Context& ctx) {
-
-        auto repl = ctx.Get(GetDockerUrl(http_redirect_url));
-        CHECK_EQUAL(200, repl->GetResponseCode());
-        // Discard all data
-        while(repl->MoreDataToRead()) {
-            repl->GetSomeData();
-        }
-
-    }).get();
-},
-
-TEST(TestDoubleRedirect)
-{
-    auto rest_client = RestClient::Create();
-    rest_client->ProcessWithPromise([&](Context& ctx) {
-
-        auto repl = ctx.Get(GetDockerUrl(http_reredirect_url));
-        CHECK_EQUAL(200, repl->GetResponseCode());
-        // Discard all data
-        while(repl->MoreDataToRead()) {
-            repl->GetSomeData();
-        }
-
-    }).get();
-},
-
-TEST(TestRedirectLoop)
-{
-    auto rest_client = RestClient::Create();
-    rest_client->ProcessWithPromise([&](Context& ctx) {
-
-        EXPECT_THROWS_AS(
-            ctx.Get(GetDockerUrl(http_redirect_loop_url)), ConstraintException);
-
-    }).get();
+    EXPECT_NO_THROW(f.get());
 }
 
-}; //lest
+TEST(Redirect, SingleRedirect)
+{
+    auto rest_client = RestClient::Create();
+    auto f = rest_client->ProcessWithPromise([&](Context& ctx) {
+
+        auto repl = ctx.Get(GetDockerUrl(http_redirect_url));
+        EXPECT_EQ(200, repl->GetResponseCode());
+        // Discard all data
+        while(repl->MoreDataToRead()) {
+            repl->GetSomeData();
+        }
+
+    });
+
+    EXPECT_NO_THROW(f.get());
+}
+
+TEST(Redirect, DoubleRedirect)
+{
+    auto rest_client = RestClient::Create();
+    auto f = rest_client->ProcessWithPromise([&](Context& ctx) {
+
+        auto repl = ctx.Get(GetDockerUrl(http_reredirect_url));
+        EXPECT_EQ(200, repl->GetResponseCode());
+        // Discard all data
+        while(repl->MoreDataToRead()) {
+            repl->GetSomeData();
+        }
+
+    });
+
+    EXPECT_NO_THROW(f.get());
+}
+
+TEST(Redirect, RedirectLoop)
+{
+    auto rest_client = RestClient::Create();
+    auto f = rest_client->ProcessWithPromise([&](Context& ctx) {
+
+        EXPECT_THROW(
+            ctx.Get(GetDockerUrl(http_redirect_loop_url)), ConstraintException);
+
+    });
+
+    EXPECT_NO_THROW(f.get());
+}
 
 int main( int argc, char * argv[] )
 {
-    namespace logging = boost::log;
-    logging::core::get()->set_filter
-    (
-        logging::trivial::severity >= logging::trivial::trace
-    );
-    return lest::run( specification, argc, argv );
+    RESTC_CPP_TEST_LOGGING_SETUP("debug");
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();;
 }
 

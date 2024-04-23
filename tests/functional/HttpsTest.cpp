@@ -3,17 +3,11 @@
 // Include before boost::log headers
 #include "restc-cpp/logging.h"
 
-#include <boost/log/core.hpp>
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
-// #include <boost/lexical_cast.hpp>
-// #include <boost/fusion/adapted.hpp>
-
 #include "restc-cpp/restc-cpp.h"
 #include "restc-cpp/RequestBuilder.h"
 
+#include "gtest/gtest.h"
 #include "restc-cpp/test_helper.h"
-#include "lest/lest.hpp"
 
 using namespace std;
 using namespace restc_cpp;
@@ -48,49 +42,35 @@ BOOST_FUSION_ADAPT_STRUCT(
 // library to use (boost::asio only support openssl and compatible
 // libraries out of the box).
 
-string https_url = "https://jsonplaceholder.typicode.com/posts/1";
+//string https_url = "https://jsonplaceholder.typicode.com/posts/1";
 
-//string https_url = "https://lastviking.eu/files/api";
+string https_url = "https://lastviking.eu/files/api";
 
-const lest::test specification[] = {
+TEST(Https, GetJson) {
+    shared_ptr<boost::asio::ssl::context> tls_ctx = make_shared<boost::asio::ssl::context>(boost::asio::ssl::context{ boost::asio::ssl::context::tlsv12_client});
 
-TEST(TestHTTPS)
-{
-    shared_ptr<boost::asio::ssl::context> tls_ctx = make_shared<boost::asio::ssl::context>(boost::asio::ssl::context{ boost::asio::ssl::context::sslv23 });
-    tls_ctx->set_options(boost::asio::ssl::context::default_workarounds
-                        | boost::asio::ssl::context::no_sslv2
-                        | boost::asio::ssl::context::no_sslv3
-                        | boost::asio::ssl::context::no_tlsv1_1
-                        | boost::asio::ssl::context::single_dh_use);
+    EXPECT_NO_THROW(tls_ctx->set_options(boost::asio::ssl::context::default_workarounds
+                    | boost::asio::ssl::context::no_sslv2
+                    | boost::asio::ssl::context::no_sslv3
+//                        | boost::asio::ssl::context::no_tlsv1_1
+                    | boost::asio::ssl::context::single_dh_use);
+    );
 
-        auto client = RestClient::Create(tls_ctx);
-        client->ProcessWithPromise([&](Context& ctx) {
+    auto client = RestClient::Create(tls_ctx);
+    auto f = client->ProcessWithPromise([&](Context& ctx) {
         Post post;
         auto reply = ctx.Get(https_url);
-
-        CHECK_EQUAL(200, reply->GetResponseCode());
-
+        EXPECT_HTTP_OK(reply->GetResponseCode());
         SerializeFromJson(post, *reply);
+        EXPECT_EQ(1, post.id);
+    });
 
-        cout << "Received post# " << post.id
-             << ", title: " << post.title;
-
-        CHECK_EQUAL(1, post.id);
-
-        cout << "Received post# " << post.id
-             << ", title: " << post.title;
-    }).get();
+    EXPECT_NO_THROW(f.get());
 }
-
-
-}; //lest
 
 int main(int argc, char * argv[])
 {
-    namespace logging = boost::log;
-    logging::core::get()->set_filter
-    (
-        logging::trivial::severity >= logging::trivial::trace
-    );
-    return lest::run(specification, argc, argv);
+    RESTC_CPP_TEST_LOGGING_SETUP("debug");
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();;
 }
